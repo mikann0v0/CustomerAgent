@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pip install:*)",
+      "Bash(conda run:*)",
+      "Bash(/opt/miniconda3/envs/ai/bin/python test_clean.py)",
+      "Bash(awk 'NR>=600 && NR<=700')",
+      "Bash(awk 'NR>=58 && NR<=85')",
+      "Bash(/opt/miniconda3/envs/ai/bin/python test_rebuild.py)",
+      "Read(//Users/mikann/Documents/Code/datafountain/code/**)",
+      "Bash(python find_smallest.py)"
+    ]
+  }
+}
