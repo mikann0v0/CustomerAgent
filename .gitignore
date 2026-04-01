@@ -12,7 +12,7 @@
 *.csv
 
 # 额外建议：忽略操作系统生成的临时文件
-config.py
+code/config.py
 .DS_Store
 code/chroma_db/*
 code/qdrant_db/*
