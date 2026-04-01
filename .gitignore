@@ -1,6 +1,6 @@
 # 忽略所有文本文件
 *.txt
-*.MD
+*.md
 
 # 忽略图片文件
 *.png
@@ -11,6 +11,7 @@
 *.csv
 
 # 额外建议：忽略操作系统生成的临时文件
+config.py
 .DS_Store
 code/chroma_db/*
 code/qdrant_db/*

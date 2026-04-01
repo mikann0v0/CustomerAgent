@@ -41,7 +41,7 @@ class MultimodalCustomerAgent:
                 temperature=self.llm_temperature
             )
         else:
-            self.llm_model = "Qwen/Qwen2.5-7B-Instruct"
+            self.llm_model = "Qwen/Qwen3-8B"
             self.llm = ChatOpenAI(
                 model=self.llm_model,
                 api_key=SILICON_API_KEY,
@@ -354,25 +354,32 @@ if __name__ == "__main__":
     # Actually, KnowledgeBaseManager init doesn't build, it just connects to Qdrant.
     agent = MultimodalCustomerAgent()
 
-    test_questions = [
-        "VR头显如何调节瞳距和佩戴？", # 技术问题 - VR头显
-        "我收到的商品破损了，要求退换货。", # 售后问题
-        "我的快递少发了一件，物流三天没动静了。", # 物流问题
-        "你好，非常感谢你的热情服务！" # 其他/闲聊
-    ]
+    try:
+        test_questions = [
+            "VR头显如何调节瞳距和佩戴？", # 技术问题 - VR头显
+            "我收到的商品破损了，要求退换货。", # 售后问题
+            "我的快递少发了一件，物流三天没动静了。", # 物流问题
+            "你好，非常感谢你的热情服务！" # 其他/闲聊
+        ]
 
-    results_text = "测试结果：\n\n"
+        results_text = "测试结果：\n\n"
 
-    for i, q in enumerate(test_questions, 1):
-        print(f"正在测试第 {i} 个问题: {q}")
-        res = agent.analyze_and_answer(q)
-        results_text += f"【问题 {i}】 {q}\n"
-        results_text += f"【回答】 {res['ret']}\n"
-        if res.get('image_list'):
-            results_text += f"【图片】 {', '.join(res['image_list'])}\n"
-        results_text += "-"*40 + "\n"
+        for i, q in enumerate(test_questions, 1):
+            print(f"正在测试第 {i} 个问题: {q}")
+            res = agent.analyze_and_answer(q)
+            results_text += f"【问题 {i}】 {q}\n"
+            results_text += f"【回答】 {res['ret']}\n"
+            if res.get('image_list'):
+                results_text += f"【图片】 {', '.join(res['image_list'])}\n"
+            results_text += "-"*40 + "\n"
 
-    with open("test_results.md", "w", encoding="utf-8") as f:
-        f.write(results_text)
+        results_file_path = Path(__file__).resolve().parent / "test_results.md"
+        with open(results_file_path, "w", encoding="utf-8") as f:
+            f.write(results_text)
 
-    print("\n测试完成，结果已保存到 test_results.md")
+        print(f"\n测试完成，结果已保存到 {results_file_path}")
+    finally:
+        # 显式关闭 qdrant client，避免 Python 退出时的 ImportError: sys.meta_path is None
+        if hasattr(agent, 'kb') and hasattr(agent.kb, 'qdrant_client') and hasattr(agent.kb.qdrant_client, 'close'):
+            agent.kb.qdrant_client.close()
+
