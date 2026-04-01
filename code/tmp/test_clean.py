@@ -1,6 +1,6 @@
 import json
 from pathlib import Path
-from main import MultimodalCustomerAgent
+from code.tmp.main import MultimodalCustomerAgent
 
 def test():
     print("Running LLM test using SiliconFlow API key...")

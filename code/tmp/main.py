@@ -14,11 +14,11 @@ from langchain_openai import OpenAIEmbeddings
 from openai import OpenAI
 
 
-CHAT_MODEL = "nvidia/nemotron-3-super-120b-a12b:free"
+CHAT_MODEL = "stepfun/step-3.5-flash:free"
 EMBEDDING_MODEL = "Qwen/Qwen3-Embedding-8B"
 VISION_MODEL = "Qwen/Qwen3-VL-8B-Instruct"
 
-OPENROUTER_API_KEY = "TO_BE_FILLED_LATER"
+OPENROUTER_API_KEY = "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"
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
 SILICON_API_KEY = "sk-cekenajymugklelyrbxjueiiklhjxprjxihaicvqnjpodflg"
@@ -88,62 +88,6 @@ class MultimodalCustomerAgent:
     def _normalize_text(self, text: str) -> str:
         return re.sub(r"\s+", " ", text).strip()
 
-    def _split_paragraphs(self, text: str) -> List[str]:
-        text_no_pic = text.replace("<PIC>", " ")
-        cleaned = self._normalize_text(text_no_pic)
-        if not cleaned:
-            return []
-
-        parts = [p.strip() for p in re.split(r"\n\s*\n", text_no_pic) if p.strip()]
-        normalized_parts = [self._normalize_text(p) for p in parts if self._normalize_text(p)]
-
-        # 某些手册几乎无换行分段，但有大量 # 标题，需按标题切开。
-        if len(normalized_parts) <= 1:
-            heading_parts = [p.strip() for p in re.split(r"(?=\s*#)", text_no_pic) if p.strip()]
-            normalized_parts = [self._normalize_text(p) for p in heading_parts if self._normalize_text(p)]
-
-        # 避免段落过长，按长度二次切分。
-        final_parts: List[str] = []
-        max_chars = 500
-        for part in normalized_parts:
-            if len(part) <= max_chars:
-                final_parts.append(part)
-                continue
-            start = 0
-            while start < len(part):
-                piece = part[start : start + max_chars].strip()
-                if piece:
-                    final_parts.append(piece)
-                start += max_chars
-
-        if final_parts:
-            return final_parts
-        return [cleaned]
-
-    def _summarize_text_for_match(self, text: str) -> str:
-        short = self._normalize_text(text)[:300]
-        if not short:
-            return ""
-
-        if self.llm_client is None:
-            return short[:80]
-
-        try:
-            response = self.llm_client.chat.completions.create(
-                model=self.llm_model,
-                temperature=0.0,
-                messages=[
-                    {
-                        "role": "system",
-                        "content": "你是信息摘要助手。请用一句话概括给定段落的核心场景与对象，不超过30字。",
-                    },
-                    {"role": "user", "content": short},
-                ],
-            )
-            return self._normalize_text(response.choices[0].message.content or "")[:80] or short[:80]
-        except Exception:
-            return short[:80]
-
     def _summarize_image_for_match(
         self,
         image_path: str,
@@ -191,99 +135,6 @@ class MultimodalCustomerAgent:
         except Exception as e:
             print(f"Vision API error for {image_id}: {e}")
             return f"{manual_name} 图片 {image_id}"
-
-    def _char_bigrams(self, text: str) -> set:
-        text = self._normalize_text(text)
-        if len(text) < 2:
-            return {text} if text else set()
-        return {text[i : i + 2] for i in range(len(text) - 1)}
-
-    def _local_similarity(self, a: str, b: str) -> float:
-        ta = self._char_bigrams(a)
-        tb = self._char_bigrams(b)
-        if not ta or not tb:
-            return 0.0
-        inter = len(ta & tb)
-        union = len(ta | tb)
-        return inter / union if union else 0.0
-
-    def _cosine(self, a: List[float], b: List[float]) -> float:
-        if not a or not b or len(a) != len(b):
-            return 0.0
-        dot = sum(x * y for x, y in zip(a, b))
-        na = math.sqrt(sum(x * x for x in a))
-        nb = math.sqrt(sum(y * y for y in b))
-        if na == 0 or nb == 0:
-            return 0.0
-        return dot / (na * nb)
-
-    def _score_summary_pairs(self, text_summaries: List[str], image_summaries: List[str]) -> List[List[float]]:
-        if not text_summaries or not image_summaries:
-            return []
-
-        if self.embeddings is not None:
-            try:
-                t_vec = self.embeddings.embed_documents(text_summaries)
-                i_vec = self.embeddings.embed_documents(image_summaries)
-                return [[self._cosine(iv, tv) for tv in t_vec] for iv in i_vec]
-            except Exception:
-                pass
-
-        return [[self._local_similarity(i, t) for t in text_summaries] for i in image_summaries]
-
-    def link_images_to_text_by_summary(self, manual_file: Path) -> Dict[str, Any]:
-        text, image_ids = self._read_manual_file(manual_file)
-        manual_name = manual_file.stem
-        anchors = self._extract_image_anchors(text, image_ids)
-
-        paragraphs = self._split_paragraphs(text)
-        text_summaries = [self._summarize_text_for_match(p) for p in paragraphs]
-
-        image_items: List[Dict[str, str]] = []
-        for idx, image_id in enumerate(image_ids):
-            image_path = self.image_name_to_path.get(image_id.lower(), "")
-            fallback_context = anchors[idx]["context"] if idx < len(anchors) else ""
-            image_summary = self._summarize_image_for_match(
-                image_path,
-                image_id,
-                manual_name,
-                fallback_context=fallback_context,
-            )
-            image_items.append(
-                {
-                    "image_id": image_id,
-                    "image_path": image_path,
-                    "image_summary": image_summary,
-                }
-            )
-
-        score_matrix = self._score_summary_pairs(text_summaries, [x["image_summary"] for x in image_items])
-
-        paragraph_records = [
-            {
-                "paragraph_index": i,
-                "paragraph_text": paragraphs[i],
-                "text_summary": text_summaries[i],
-                "image_ids": [],
-            }
-            for i in range(len(paragraphs))
-        ]
-
-        for img_idx, image_item in enumerate(image_items):
-            if not paragraph_records:
-                continue
-
-            row = score_matrix[img_idx] if score_matrix else [0.0] * len(paragraph_records)
-            best_idx = max(range(len(paragraph_records)), key=lambda j: row[j])
-            paragraph_records[best_idx]["image_ids"].append(image_item["image_id"])
-
-        return {
-            "manual": manual_name,
-            "paragraph_count": len(paragraph_records),
-            "image_count": len(image_items),
-            "paragraph_links": paragraph_records,
-            "image_items": image_items,
-        }
 
     def _build_image_lookup(self) -> Dict[str, str]:
         image_lookup: Dict[str, str] = {}
@@ -380,7 +231,7 @@ class MultimodalCustomerAgent:
         manual_files = sorted([p for p in self.docs_dir.glob("*.txt") if p.is_file()])
 
         # 为了测试，我们只过滤出包含图片最少的手册（VR头显手册.txt）
-        manual_files = [p for p in manual_files if p.name == "VR头显手册.txt"]
+        # manual_files = [p for p in manual_files if p.name == "VR头显手册.txt"]
 
         for manual_file in manual_files:
             text, image_ids = self._read_manual_file(manual_file)
@@ -511,7 +362,80 @@ class MultimodalCustomerAgent:
             lines.append("可参考相关图片位置 <PIC>。")
         return "\n".join(lines)
 
+    def analyze_intent(self, question: str) -> Dict[str, Any]:
+        """使用 LLM 识别用户意图，分辨是否需要查阅手册。"""
+        if not self.llm_client:
+            return {"intent": "manual_qa", "reason": "No LLM available, default to manual QA"}
+
+        system_prompt = """
+        系统提示：
+        你是智能客服意图识别专家。你需要分析用户的问题，判断其真实意图，并严格返回以下 JSON 格式。
+
+        意图分类仅限以下四种：
+        1. "manual_qa": 用户在询问某个电器的使用方法、部件说明、故障排查、操作步骤、维修建议、安全说明等需要查阅产品说明书才能回答的问题（例如：“如何启动发电机？”、“空调清洗滤网步骤”）。
+        2. "after_sales": 用户在询问退换货政策、维修流程、商品损坏理赔、开发票、发票抬头修改、售后服务态度投诉等售后相关问题（例如：“支持7天无理由退换吗”、“发票类型是什么”）。
+        3. "logistics_or_order": 用户在询问物流进度、少发漏发、快递员态度差、送错货等订单与物流相关问题（例如：“快递丢失了怎么办”、“少发了一件货”）。
+        4. "complaint_or_other": 用户纯粹的谩骂、情绪宣泄，或者与产品、订单无关的闲聊。
+
+        【注意】如果用户的问题虽然提到了家电，但是其核心诉求是退款、换货、包装破损理赔等，属于 "after_sales"。只有关于产品本身的技术细节或使用操作，才属于 "manual_qa"。
+
+        返回格式必须是合法的 JSON，形如：
+        {
+            "intent": "manual_qa",
+            "reason": "简短的一句话理由"
+        }
+        """
+        try:
+            response = self.llm_client.chat.completions.create(
+                model=self.llm_model,
+                temperature=0.0,
+                response_format={"type": "json_object"} if "qwen" not in self.llm_model.lower() else None,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": question},
+                ],
+            )
+            content = response.choices[0].message.content or "{}"
+
+            # 手动提取 JSON，兼容不支持 JSON mode 的模型
+            match = re.search(r"\{.*\}", content, re.DOTALL)
+            if match:
+                content = match.group(0)
+            return json.loads(content)
+        except Exception as e:
+            print(f"Intent Analysis Error: {e}")
+            return {"intent": "manual_qa", "reason": "Error during analysis, default to manual QA"}
+
     def analyze_and_answer(self, question: str, top_k: int = 8) -> Dict[str, Any]:
+        # 1. 意图识别
+        intent_info = self.analyze_intent(question)
+        intent = intent_info.get("intent", "manual_qa")
+        print(f"Detected Intent: {intent} (Reason: {intent_info.get('reason', '')})")
+
+        # 2. 针对非手册问答意图进行快速回复
+        if intent == "logistics_or_order":
+            return {
+                "ret": "您好！关于您的订单物流或少发漏发问题，请提供您的订单号和快递单号，我将为您核实物流状态或安排补发/转交人工客服处理。",
+                "image_list": [],
+                "image_paths": [],
+                "references": [],
+            }
+        elif intent == "after_sales":
+            return {
+                "ret": "您好！关于退换货、发票开具、售后维修或商品损坏等问题，为了更好地帮助您，请提供您的订单号以及相关照片凭证，我将为您转接售后专员处理。",
+                "image_list": [],
+                "image_paths": [],
+                "references": [],
+            }
+        elif intent == "complaint_or_other":
+            return {
+                "ret": "非常抱歉给您带来不便。如果您对我们的服务或快递人员有任何不满，请留下您的联系方式和订单号，我将立刻为您记录并反馈给高级客服专员跟进处理。",
+                "image_list": [],
+                "image_paths": [],
+                "references": [],
+            }
+
+        # 3. 如果是 manual_qa，走原有的检索和生成逻辑
         if self.vector_store is not None:
             from qdrant_client.http import models as rest
             
@@ -642,8 +566,8 @@ class MultimodalCustomerAgent:
         if llm_client is None and SILICON_API_KEY:
             # Fallback to SILICON for chat if OPENROUTER is missing
             try:
-                llm_client = OpenAI(api_key=SILICON_API_KEY, base_url=SILICON_BASE_URL)
-                self.llm_model = "Qwen/Qwen2.5-7B-Instruct"
+                llm_client = OpenAI(api_key=OPENROUTER_API_KEY, base_url=OPENROUTER_BASE_URL)
+                self.llm_model = CHAT_MODEL
             except Exception:
                 pass
 
@@ -684,25 +608,3 @@ if __name__ == "__main__":
     agent = MultimodalCustomerAgent()
     stats = agent.build_knowledge_base()
     print(f"知识库构建完成，总文档片段={stats['docs']}，新增={stats['added']}")
-
-    test_result = agent.run_smallest_manual_link_test(save_json=True)
-    print(
-        json.dumps(
-            {
-                "manual": test_result["manual"],
-                "paragraph_count": test_result["paragraph_count"],
-                "image_count": test_result["image_count"],
-                "output_file": test_result.get("output_file", ""),
-                "paragraph_preview": [
-                    {
-                        "paragraph_index": x["paragraph_index"],
-                        "image_ids": x["image_ids"],
-                        "text_summary": x["text_summary"],
-                    }
-                    for x in test_result["paragraph_links"][:5]
-                ],
-            },
-            ensure_ascii=False,
-            indent=2,
-        )
-    )
